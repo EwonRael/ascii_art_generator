@@ -281,3 +281,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Inspired by classic ASCII art generators
 - Special thanks to the PIL/Pillow project
+
+
+---
+*Built with AI assistance from [Claude (Anthropic)](https://claude.com/).*
