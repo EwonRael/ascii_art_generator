@@ -130,7 +130,7 @@ class ASCIIArtGenerator:
                                 pixel_value = np.clip(pixel_value, 0, 255)
                                 self.debug_print(f"Clipped pixel value to range [0,255]: {pixel_value}")
 
-                            char_idx = int(pixel_value * (len(self.chars) - 1) / 255)
+                            char_idx = int(int(pixel_value) * (len(self.chars) - 1) / 255)
                             # Ensure index is within bounds
                             char_idx = max(0, min(char_idx, len(self.chars) - 1))
                             ascii_row.append(self.chars[char_idx])
