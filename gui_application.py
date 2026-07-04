@@ -190,6 +190,23 @@ class ASCIIArtApp(tk.Tk):
     # Generation
     # ------------------------------------------------------------------
 
+    # Busy-cursor names to try, in order. "wait" only exists on Windows;
+    # X11/Tk uses "watch" for the hourglass-style cursor, and "spinning"
+    # is a further fallback seen on some Tk builds.
+    _BUSY_CURSORS = ("watch", "wait", "spinning")
+
+    def _set_busy_cursor(self, busy):
+        """Set (or clear) a busy cursor without crashing on unsupported names."""
+        if not busy:
+            self.config(cursor="")
+            return
+        for name in self._BUSY_CURSORS:
+            try:
+                self.config(cursor=name)
+                return
+            except tk.TclError:
+                continue
+
     def _generate_preview(self):
         """Generate a preview of the ASCII art with reduced settings."""
         if not self.input_image_path:
@@ -205,7 +222,7 @@ class ASCIIArtApp(tk.Tk):
             preview_height = min(40, self.height_var.get())
 
         try:
-            self.config(cursor="wait")
+            self._set_busy_cursor(True)
             self.update()
             self._generate_ascii_art(preview_width, preview_height)
             self.preview_notebook.select(1)
@@ -214,7 +231,7 @@ class ASCIIArtApp(tk.Tk):
             messagebox.showerror("Error", f"Failed to generate preview: {e}")
             self.status_var.set("Error generating preview.")
         finally:
-            self.config(cursor="")
+            self._set_busy_cursor(False)
 
     def _generate_full(self):
         """Generate full ASCII art with all settings."""
@@ -222,13 +239,13 @@ class ASCIIArtApp(tk.Tk):
             messagebox.showwarning("Warning", "No image loaded. Please load an image first.")
             return
         try:
-            self.config(cursor="wait")
+            self._set_busy_cursor(True)
             self.update()
             threading.Thread(target=self._threaded_generation, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start generation: {e}")
             self.status_var.set("Error starting generation.")
-            self.config(cursor="")
+            self._set_busy_cursor(False)
 
     def _threaded_generation(self):
         """Generate ASCII art in a separate thread to keep UI responsive."""
@@ -244,13 +261,13 @@ class ASCIIArtApp(tk.Tk):
         """Update UI after successful generation."""
         self.preview_notebook.select(1)
         self.status_var.set("ASCII art generated successfully.")
-        self.config(cursor="")
+        self._set_busy_cursor(False)
 
     def _show_generation_error(self, error_msg):
         """Show error message after failed generation."""
         messagebox.showerror("Generation Error", f"Failed to generate ASCII art: {error_msg}")
         self.status_var.set("Error generating ASCII art.")
-        self.config(cursor="")
+        self._set_busy_cursor(False)
 
     def _generate_ascii_art(self, width, height):
         """Generate ASCII art with the specified dimensions."""
