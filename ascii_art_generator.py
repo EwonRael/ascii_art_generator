@@ -5,6 +5,9 @@ from PIL import Image, ImageOps, ImageEnhance
 import numpy as np
 import traceback
 
+from glyph_profiles import build_glyph_profiles, GRID_COLS, GRID_ROWS
+from glyphset_narrow import NARROW_GLYPHS
+
 class ASCIIArtGenerator:
     """
     A class to convert images to ASCII art with debugging capabilities.
@@ -20,7 +23,7 @@ class ASCIIArtGenerator:
 
     def __init__(self, char_set='standard', width=100, height=None,
                 contrast=1.0, brightness=1.0, invert=False, dither=False,
-                debug=True):
+                debug=True, shape_aware=False):
         """Initialize the ASCII Art generator with debugging capabilities."""
         self.width = width
         self.height = height
@@ -29,6 +32,11 @@ class ASCIIArtGenerator:
         self.invert = invert
         self.dither = dither
         self.debug_mode = debug
+        # When True, characters are chosen by matching a sub-cell glyph
+        # shape profile instead of averaging the cell to one brightness
+        # value -- see glyph_profiles.py and TODO.md items 2/3. Currently
+        # always matches against the narrow (95-char) glyph pool.
+        self.shape_aware = shape_aware
 
         # Set character set
         if char_set in self.CHAR_SETS:
@@ -90,9 +98,15 @@ class ASCIIArtGenerator:
                 self.height = self.calculate_auto_height(self.width, image)
                 self.debug_print(f"Auto-calculated height: {self.height}")
 
-            # Resize image
-            self.debug_print(f"Resizing image from {image.size} to ({self.width}, {self.height})")
-            image = image.resize((self.width, self.height), Image.LANCZOS)
+            # Resize image. In shape-aware mode we need GRID_COLS x GRID_ROWS
+            # source pixels per output character (not just one), so profile
+            # matching has real sub-cell detail to compare against.
+            if self.shape_aware:
+                target_size = (self.width * GRID_COLS, self.height * GRID_ROWS)
+            else:
+                target_size = (self.width, self.height)
+            self.debug_print(f"Resizing image from {image.size} to {target_size}")
+            image = image.resize(target_size, Image.LANCZOS)
 
             # Convert to grayscale
             self.debug_print(f"Converting image from {image.mode} to grayscale")
@@ -191,6 +205,48 @@ class ASCIIArtGenerator:
             traceback.print_exc()
             raise
 
+    def _map_pixels_to_ascii_profiled(self, image):
+        """Map each output character by nearest-matching a glyph shape profile.
+
+        Downsamples every GRID_ROWS x GRID_COLS block of the (already
+        oversized, see _preprocess_image) source image to the same grid
+        shape the glyph profiles use, then picks whichever glyph's profile
+        is closest by squared distance. See glyph_profiles.py.
+        """
+        try:
+            pixels = np.array(image, dtype=np.float64)
+            out_height = pixels.shape[0] // GRID_ROWS
+            out_width = pixels.shape[1] // GRID_COLS
+            self.debug_print(
+                f"Profiled mapping: {out_width}x{out_height} characters, "
+                f"{GRID_COLS}x{GRID_ROWS} grid each, pool size {len(NARROW_GLYPHS)}"
+            )
+
+            profiles = build_glyph_profiles(NARROW_GLYPHS)
+            chars = list(profiles.keys())
+            profile_matrix = np.stack([profiles[c].ravel() for c in chars])
+
+            ink = 1.0 - (pixels / 255.0)
+
+            ascii_image = []
+            for row_idx in range(out_height):
+                ascii_row = []
+                r0 = row_idx * GRID_ROWS
+                for col_idx in range(out_width):
+                    c0 = col_idx * GRID_COLS
+                    block = ink[r0:r0 + GRID_ROWS, c0:c0 + GRID_COLS].ravel()
+                    distances = np.sum((profile_matrix - block) ** 2, axis=1)
+                    ascii_row.append(chars[int(np.argmin(distances))])
+                ascii_image.append(ascii_row)
+
+            self.debug_print(f"Profiled ASCII conversion complete: {len(ascii_image)} rows")
+            return ascii_image
+
+        except Exception as e:
+            self.debug_print(f"Error in profiled pixel mapping: {e}")
+            traceback.print_exc()
+            raise
+
     def convert_image(self, input_path):
         """Convert an image file to ASCII art with error handling."""
         try:
@@ -212,7 +268,10 @@ class ASCIIArtGenerator:
             processed_image = self._preprocess_image(image)
 
             # Convert to ASCII
-            ascii_image = self._map_pixels_to_ascii(processed_image)
+            if self.shape_aware:
+                ascii_image = self._map_pixels_to_ascii_profiled(processed_image)
+            else:
+                ascii_image = self._map_pixels_to_ascii(processed_image)
 
             # Join the characters into a string
             self.debug_print("Joining ASCII characters into final string")
@@ -234,7 +293,10 @@ class ASCIIArtGenerator:
             processed_image = self._preprocess_image(image)
 
             # Convert to ASCII
-            ascii_image = self._map_pixels_to_ascii(processed_image)
+            if self.shape_aware:
+                ascii_image = self._map_pixels_to_ascii_profiled(processed_image)
+            else:
+                ascii_image = self._map_pixels_to_ascii(processed_image)
 
             # Join the characters into a string
             ascii_art = '\n'.join([''.join(row) for row in ascii_image])
@@ -282,6 +344,8 @@ def main():
     parser.add_argument('--brightness', type=float, help='Brightness adjustment (default: 1.0)', default=1.0)
     parser.add_argument('--invert', action='store_true', help='Invert the image')
     parser.add_argument('--dither', action='store_true', help='Apply dithering for better detail')
+    parser.add_argument('--shape-aware', action='store_true',
+                       help='Match characters by sub-cell glyph shape profile instead of average brightness (narrow glyph pool only, experimental)')
     parser.add_argument('--preview', action='store_true', help='Preview the ASCII art in console')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
 
@@ -297,7 +361,8 @@ def main():
             brightness=args.brightness,
             invert=args.invert,
             dither=args.dither,
-            debug=args.debug
+            debug=args.debug,
+            shape_aware=args.shape_aware
         )
 
         # Convert image to ASCII

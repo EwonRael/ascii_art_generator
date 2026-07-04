@@ -41,10 +41,39 @@ Build an algorithm that compares an image region to a candidate font glyph with 
 just a single averaged pixel value. Basis for real glyph-shape-based character selection instead
 of a hand-guessed density string.
 
+**Done (2026-07-04):** `glyph_profiles.py` renders each glyph (`NARROW_GLYPHS` only for now, per
+plan) from `ciour/texgyrecursor-regular.otf` into a cell standardized to the *measured terminal*
+aspect ratio (`CHAR_CELL_CORRECTION`'s 2.1428, not the font's own, noticeably squarer,
+ascent/descent box), then downsamples with `Image.BOX` to a `GRID_COLS=3 x GRID_ROWS=6` grid —
+3 wide by the user's own call, 6 tall from `round(3 * 2.1428)` (whatever makes each cell closest
+to square, per the user's spec). Downsampling via resize, rather than manually slicing the glyph
+into equal rectangles, is what sidesteps the "glyph pixel dimensions don't divide evenly" problem
+raised during planning — the same resize step is later reused on the source image, so profile
+grids and sampled grids are always built the same way. Verified both by unit test
+(`tests/test_glyph_profiles.py`) and by eye: `_` is bottom-heavy, `"`/`'` are top-heavy, `.` sits
+low, `-`/`o` sit mid-cell — the shape distinctions this feature exists to capture. Cached via
+`lru_cache`.
+
 ## 3. Rewrite ASCII generation to use sub-character awareness
 Rework `_map_pixels_to_ascii()` (and the duplicate CLI/GUI preprocessing pipelines feeding it)
 to sample a sub-cell grid per output character and nearest-match it against the profiles/algorithm
 from item 2, instead of one-pixel-per-character brightness mapping.
+
+**Initial version done (2026-07-04):** added additively rather than replacing the existing path
+yet — a `shape_aware=False` constructor flag / `--shape-aware` CLI flag on `ASCIIArtGenerator`.
+When on, `_preprocess_image` resizes to `width*GRID_COLS x height*GRID_ROWS` (instead of
+`width x height`) so there's real sub-cell detail to sample, and the new
+`_map_pixels_to_ascii_profiled()` nearest-matches each block against the item-2 profiles by
+squared distance. Default brightness-only path is byte-for-byte unchanged (verified). GUI is not
+wired up to this yet. Matches against `NARROW_GLYPHS` only, as planned.
+
+**Limitation observed, ties back to item 2's font-limitation note:** in flat/solid dark image
+regions, output gets visually noisy — flickers between several similarly-inky characters
+(`%`, `B`, `8`, `$`, `@`...) cell-to-cell instead of settling on one, because no narrow-pool
+glyph gets anywhere close to the target's near-1.0 ink density (font tops out ~21% coverage), so
+squared-distance ranking among the closest-available options is sensitive to minor shape noise.
+Not a bug in the matching logic — a real gap that switching to the expanded glyph pool, or item 4
+(warp/contrast tuning), may need to address if flat-region fidelity matters.
 
 ## 4. Image warp/skew optimization algorithm
 Create an algorithm that modifies the source image (skewing/stretching) to try to maximize the
