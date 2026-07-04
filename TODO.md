@@ -17,6 +17,25 @@ a bundled file.
   bundle. See `ciour/README.md` for provenance/license details.
 
 ## 2. Image-to-font sub-character-aware comparison algorithm
+**Glyph pools done (2026-07-04):** `glyphset_narrow.py` (`NARROW_GLYPHS`, the 95 printable
+ASCII chars) and `glyphset_expanded.py` (`EXPANDED_GLYPHS`, 649 chars total) are checked in.
+The expanded set was later grown from an initial 131-char draft to ~all of
+`ciour/texgyrecursor-regular.otf`'s usable coverage (673 mapped codepoints minus 25
+combining-mark/format/duplicate-space entries that can't stand alone in a cell) --
+Latin-1, Latin Extended-A/B, Latin Extended Additional, Greek, general punctuation,
+currency, letterlike symbols, arrows, math operators, and a handful of ligatures/misc.
+Every character was verified against the font's cmap with fontTools *and* confirmed to
+render non-blank via `PIL.ImageFont.getmask().getbbox()`.
+
+**Important limitation found:** TeX Gyre Cursor has no box-drawing (U+2500 block), no
+block-element (U+2580 block), and almost no geometric-shape glyphs -- can't be added at
+any size. Rendered ink-density measurement (not just Unicode-category guessing) also
+shows this font has no genuinely "dark" glyph: the heaviest available (₩ ₦ ¶ № Ŋ Æ Ǽ Ħ Ḫ Ṃ
+Œ...) top out around 21% pixel coverage in a cell -- nowhere near a solid block. If the
+accuracy-comparison work (item 3) ever needs a true "black" output cell, this font can't
+provide one; either swap in a font with block elements or lean on the backlogged Braille
+dot-matrix mode (which needs no font rasterization at all).
+
 Build an algorithm that compares an image region to a candidate font glyph with sub-character
 (sub-cell) awareness — i.e. matching on a sampled brightness/shape grid within the cell, not
 just a single averaged pixel value. Basis for real glyph-shape-based character selection instead
