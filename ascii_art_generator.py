@@ -42,17 +42,24 @@ class ASCIIArtGenerator:
         if self.debug_mode:
             print(f"DEBUG [ASCIIArtGenerator]: {message}")
 
+    # Character-cell width/height correction factor for monospace output.
+    # Measured from Courier New (see font-compair/measure_ratios.py, which
+    # reads exact glyph corner coordinates out of reference SVGs): a Courier
+    # New cell is 2.1428x taller than it is wide, so we shrink the naive
+    # aspect-ratio height by 1/2.1428 to compensate.
+    CHAR_CELL_CORRECTION = 1 / 2.1428
+
     @staticmethod
     def calculate_auto_height(width, image):
         """Calculate output height from an image's aspect ratio.
 
-        Multiplies by 0.5 to account for terminal/monospace character cells
-        being roughly twice as tall as they are wide. This is the single
+        Applies CHAR_CELL_CORRECTION to account for terminal/monospace
+        character cells being taller than they are wide. This is the single
         source of truth for that correction factor -- other pipelines
         (GUI) should call this rather than re-deriving it.
         """
         aspect_ratio = image.height / image.width
-        return int(width * aspect_ratio * 0.5)
+        return int(width * aspect_ratio * ASCIIArtGenerator.CHAR_CELL_CORRECTION)
 
     @staticmethod
     def apply_contrast(image, factor):

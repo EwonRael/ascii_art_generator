@@ -3,10 +3,18 @@
 Personal core-engine rework backlog. Not implementing yet — planning only.
 
 ## 1. Standardize the font
-Pick a single font to use for algorithmic work (glyph profiling, accuracy scoring), separate
-from the GUI's cosmetic preview font. Should be a bundled `.ttf` loaded via
-`PIL.ImageFont.truetype(path)` (not an OS-installed font) to avoid "works on my machine" bugs.
-Candidate: DejaVu Sans Mono, vendored into `assets/fonts/`. Not decided.
+**Decided (2026-07-04): Courier's measured metrics are the reference**, both as a number and as
+a bundled file.
+- The character-cell width/height ratio (2.1428, from `font-compair/measure_ratios.py` reading
+  exact glyph corners out of reference SVGs) is live in `ascii_art_generator.py` as
+  `ASCIIArtGenerator.CHAR_CELL_CORRECTION`.
+- For actual glyph-outline rasterization (items 2/3 below), **`ciour/texgyrecursor-regular.otf`**
+  (+ italic/bold/bold-italic) is bundled — TeX Gyre Cursor, GUST e-Foundry's freely-licensed
+  (GUST Font License / LPPL) metric-compatible clone of Courier, the same font served by the
+  LaTeX Font Catalogue's "Courier" entry. We aren't using Microsoft's actual Courier New file
+  since it's a proprietary Monotype font that can't be redistributed — but the letterform shapes
+  and the "Courier" name are public domain, so a freely-licensed rendering of them is fine to
+  bundle. See `ciour/README.md` for provenance/license details.
 
 ## 2. Image-to-font sub-character-aware comparison algorithm
 Build an algorithm that compares an image region to a candidate font glyph with sub-character
@@ -28,9 +36,8 @@ user-driven warp control (no drag handles or interactive UI).
 ---
 
 ## Backlog (deferred, lower priority, not scoped yet)
-- Fix the character-cell aspect ratio properly: replace the guessed `0.5` height multiplier
-  (hardcoded in both `ascii_art_generator.py` `_preprocess_image` and `gui_settings.py`
-  `update_auto_height`) with a value measured from the standardized font (item 1).
+- ~~Fix the character-cell aspect ratio properly~~ — done: replaced the guessed `0.5` height
+  multiplier with `ASCIIArtGenerator.CHAR_CELL_CORRECTION` (1/2.1428, measured from Courier New).
 - Possible **Braille dot-matrix character mode** (U+2800–U+28FF): each of the 256 Braille
   characters encodes an exact 2-wide × 4-tall grid of on/off dots — a known technique (e.g.
   `chafa --symbols=braille`) needing no profiling/matching, just direct bit math, giving higher
