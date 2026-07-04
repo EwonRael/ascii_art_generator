@@ -65,3 +65,27 @@ def build_glyph_profiles(glyphs=NARROW_GLYPHS, font_path=FONT_PATH, cols=GRID_CO
         ink = 1.0 - (np.asarray(cell, dtype=np.float64) / 255.0)
         profiles[char] = ink
     return profiles
+
+
+def darkest_avg_ink(glyphs=NARROW_GLYPHS):
+    """Highest whole-cell average ink coverage any glyph in the pool reaches.
+
+    Box-filter downsampling is a linear area average, so a profile grid's
+    mean equals the full-resolution rendered glyph's mean -- no need to
+    re-render at full res to get this. This is the ceiling a plain
+    brightness-only mapping (one value per cell) can ever hit.
+    """
+    profiles = build_glyph_profiles(glyphs)
+    return max(grid.mean() for grid in profiles.values())
+
+
+def darkest_subcell_ink(glyphs=NARROW_GLYPHS):
+    """Highest ink density any single sub-cell rectangle reaches, across all glyphs.
+
+    Ink can concentrate unevenly within a glyph (e.g. a crossbar
+    intersection), so this is noticeably higher than darkest_avg_ink() --
+    it's the ceiling a single grid cell in the shape-aware matcher can hit,
+    even though no glyph averages anywhere near this dark overall.
+    """
+    profiles = build_glyph_profiles(glyphs)
+    return max(grid.max() for grid in profiles.values())
