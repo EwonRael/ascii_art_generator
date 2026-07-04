@@ -254,8 +254,7 @@ def update_auto_height(app, *args):
         if app.input_image_path and os.path.exists(app.input_image_path):
             try:
                 with Image.open(app.input_image_path) as img:
-                    aspect_ratio = img.height / img.width
-                    height = int(app.width_var.get() * aspect_ratio * 0.5)
+                    height = ASCIIArtGenerator.calculate_auto_height(app.width_var.get(), img)
                     app.height_var.set(height)
             except Exception as e:
                 print(f"Error calculating auto height: {e}")

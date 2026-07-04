@@ -42,14 +42,45 @@ class ASCIIArtGenerator:
         if self.debug_mode:
             print(f"DEBUG [ASCIIArtGenerator]: {message}")
 
+    @staticmethod
+    def calculate_auto_height(width, image):
+        """Calculate output height from an image's aspect ratio.
+
+        Multiplies by 0.5 to account for terminal/monospace character cells
+        being roughly twice as tall as they are wide. This is the single
+        source of truth for that correction factor -- other pipelines
+        (GUI) should call this rather than re-deriving it.
+        """
+        aspect_ratio = image.height / image.width
+        return int(width * aspect_ratio * 0.5)
+
+    @staticmethod
+    def apply_contrast(image, factor):
+        """Adjust image contrast by the given factor."""
+        return ImageEnhance.Contrast(image).enhance(factor)
+
+    @staticmethod
+    def apply_brightness(image, factor):
+        """Adjust image brightness by the given factor."""
+        return ImageEnhance.Brightness(image).enhance(factor)
+
+    @staticmethod
+    def apply_invert(image):
+        """Invert image tones."""
+        return ImageOps.invert(image)
+
+    @staticmethod
+    def apply_dither(image):
+        """Apply Floyd-Steinberg dithering, returning a grayscale image."""
+        image = image.convert('1', dither=Image.FLOYDSTEINBERG)
+        return image.convert('L')
+
     def _preprocess_image(self, image):
         """Preprocess the image with sizing and adjustments."""
         try:
             # Calculate height to maintain aspect ratio if not specified
             if self.height is None:
-                aspect_ratio = image.height / image.width
-                # Multiply by 0.5 to account for terminal character height/width ratio
-                self.height = int(self.width * aspect_ratio * 0.5)
+                self.height = self.calculate_auto_height(self.width, image)
                 self.debug_print(f"Auto-calculated height: {self.height}")
 
             # Resize image
@@ -63,25 +94,22 @@ class ASCIIArtGenerator:
             # Apply contrast adjustment
             if self.contrast != 1.0:
                 self.debug_print(f"Adjusting contrast with factor {self.contrast}")
-                enhancer = ImageEnhance.Contrast(image)
-                image = enhancer.enhance(self.contrast)
+                image = self.apply_contrast(image, self.contrast)
 
             # Apply brightness adjustment
             if self.brightness != 1.0:
                 self.debug_print(f"Adjusting brightness with factor {self.brightness}")
-                enhancer = ImageEnhance.Brightness(image)
-                image = enhancer.enhance(self.brightness)
+                image = self.apply_brightness(image, self.brightness)
 
             # Invert if requested
             if self.invert:
                 self.debug_print("Inverting image colors")
-                image = ImageOps.invert(image)
+                image = self.apply_invert(image)
 
             # Apply dithering if requested
             if self.dither:
                 self.debug_print("Applying dithering")
-                image = image.convert('1', dither=Image.FLOYDSTEINBERG)
-                image = image.convert('L')
+                image = self.apply_dither(image)
 
             self.debug_print(f"Preprocessing complete: {image.size}, {image.mode}")
             return image

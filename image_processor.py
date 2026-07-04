@@ -4,6 +4,8 @@ import cv2
 import traceback
 import sys
 
+from ascii_art_generator import ASCIIArtGenerator
+
 class ImageProcessor:
     """
     Advanced image processing class with debugging capabilities.
@@ -66,8 +68,7 @@ class ImageProcessor:
         """Resize the image."""
         try:
             if height is None:
-                aspect_ratio = self.image.height / self.image.width
-                height = int(width * aspect_ratio)
+                height = ASCIIArtGenerator.calculate_auto_height(width, self.image)
 
             self.debug_print(f"Resizing image from {self.image.size} to ({width}, {height})")
             self.image = self.image.resize((width, height), method)
@@ -94,8 +95,7 @@ class ImageProcessor:
         """Adjust the image contrast."""
         try:
             self.debug_print(f"Adjusting contrast with factor {factor}")
-            enhancer = ImageEnhance.Contrast(self.image)
-            self.image = enhancer.enhance(factor)
+            self.image = ASCIIArtGenerator.apply_contrast(self.image, factor)
             return self
         except Exception as e:
             self.debug_print(f"Error adjusting contrast: {e}")
@@ -106,8 +106,7 @@ class ImageProcessor:
         """Adjust the image brightness."""
         try:
             self.debug_print(f"Adjusting brightness with factor {factor}")
-            enhancer = ImageEnhance.Brightness(self.image)
-            self.image = enhancer.enhance(factor)
+            self.image = ASCIIArtGenerator.apply_brightness(self.image, factor)
             return self
         except Exception as e:
             self.debug_print(f"Error adjusting brightness: {e}")
@@ -130,7 +129,7 @@ class ImageProcessor:
         """Invert the image colors."""
         try:
             self.debug_print("Inverting image colors")
-            self.image = ImageOps.invert(self.image)
+            self.image = ASCIIArtGenerator.apply_invert(self.image)
             return self
         except Exception as e:
             self.debug_print(f"Error inverting image: {e}")
@@ -141,8 +140,7 @@ class ImageProcessor:
         """Apply Floyd-Steinberg dithering."""
         try:
             self.debug_print("Applying dithering")
-            self.image = self.image.convert('1', dither=Image.FLOYDSTEINBERG)
-            self.image = self.image.convert('L')
+            self.image = ASCIIArtGenerator.apply_dither(self.image)
             return self
         except Exception as e:
             self.debug_print(f"Error applying dithering: {e}")

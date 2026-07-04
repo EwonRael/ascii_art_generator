@@ -216,8 +216,7 @@ class ASCIIArtApp(tk.Tk):
         preview_width = min(80, self.width_var.get())
         if self.auto_height_var.get():
             with Image.open(self.input_image_path) as img:
-                aspect_ratio = img.height / img.width
-                preview_height = int(preview_width * aspect_ratio * 0.5)
+                preview_height = ASCIIArtGenerator.calculate_auto_height(preview_width, img)
         else:
             preview_height = min(40, self.height_var.get())
 
@@ -296,6 +295,10 @@ class ASCIIArtApp(tk.Tk):
             self.processor.apply_adaptive_thresholding(
                 block_size=self.thresh_block_var.get(), c=self.thresh_c_var.get()
             )
+        if self.invert_var.get():
+            self.processor.invert()
+        if self.dither_var.get():
+            self.processor.apply_dithering()
 
         processed_img = self.processor.get_processed_image()
 
@@ -306,7 +309,6 @@ class ASCIIArtApp(tk.Tk):
         generator = ASCIIArtGenerator(
             char_set=char_set, width=width, height=height,
             contrast=1.0, brightness=1.0,
-            invert=self.invert_var.get(), dither=self.dither_var.get(),
         )
 
         ascii_image = generator._map_pixels_to_ascii(processed_img)
