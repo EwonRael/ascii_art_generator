@@ -32,19 +32,19 @@ class TestPlainConversion:
     """The existing brightness-only mapping, run against a real photo."""
 
     def test_produces_expected_dimensions(self, reference_image):
-        gen = ASCIIArtGenerator(width=40, debug=False)
+        gen = ASCIIArtGenerator(width=40, shape_aware=False, debug=False)
         art = gen.direct_convert(reference_image)
         lines = art.split('\n')
         assert len(lines) == gen.height
         assert all(len(line) == 40 for line in lines)
 
     def test_only_uses_configured_char_set(self, reference_image):
-        gen = ASCIIArtGenerator(width=40, char_set='basic', debug=False)
+        gen = ASCIIArtGenerator(width=40, char_set='basic', shape_aware=False, debug=False)
         art = gen.direct_convert(reference_image)
         assert set(art) <= set(gen.chars) | {'\n'}
 
     def test_deterministic(self, reference_image):
-        gen = ASCIIArtGenerator(width=40, debug=False)
+        gen = ASCIIArtGenerator(width=40, shape_aware=False, debug=False)
         assert gen.direct_convert(reference_image) == gen.direct_convert(reference_image)
 
 
@@ -69,6 +69,6 @@ class TestShapeAwareConversion:
 
     def test_differs_from_plain_mapping(self, reference_image):
         """Shape-aware matching should pick a genuinely different result, not just reproduce brightness mapping."""
-        plain = ASCIIArtGenerator(width=40, debug=False).direct_convert(reference_image)
+        plain = ASCIIArtGenerator(width=40, shape_aware=False, debug=False).direct_convert(reference_image)
         shaped = ASCIIArtGenerator(width=40, shape_aware=True, debug=False).direct_convert(reference_image)
         assert plain != shaped

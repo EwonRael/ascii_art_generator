@@ -3,6 +3,7 @@ import os
 import sys
 from collections import Counter
 from PIL import Image, ImageOps, ImageEnhance
+import cv2
 import numpy as np
 import traceback
 
@@ -23,8 +24,8 @@ class ASCIIArtGenerator:
     }
 
     def __init__(self, char_set='standard', width=100, height=None,
-                contrast=1.0, brightness=1.0, gamma=1.0, invert=False, dither=False,
-                debug=True, shape_aware=False, ink_ceiling=None):
+                contrast=1.0, brightness=1.0, gamma=1.0, sharpness=1.0, invert=False, dither=False,
+                debug=True, shape_aware=True, ink_ceiling=None):
         """Initialize the ASCII Art generator with debugging capabilities."""
         self.width = width
         self.height = height
@@ -36,13 +37,21 @@ class ASCIIArtGenerator:
         # disproportionately; gamma>1 crushes them further. 1.0 = no-op.
         # See optimize_gamma_for_diversity()/apply_gamma().
         self.gamma = gamma
+        # Sharpness enhancement factor (PIL ImageEnhance.Sharpness -- 1.0 =
+        # no-op). Unlike contrast/brightness/gamma (pointwise, order vs.
+        # resize doesn't matter), sharpening is a spatial filter, so it's
+        # applied to the full-resolution source image BEFORE the ascii-grid
+        # resize in _preprocess_image, not after. See apply_sharpness() /
+        # match_sharpness().
+        self.sharpness = sharpness
         self.invert = invert
         self.dither = dither
         self.debug_mode = debug
-        # When True, characters are chosen by matching a sub-cell glyph
-        # shape profile instead of averaging the cell to one brightness
-        # value -- see glyph_profiles.py and TODO.md items 2/3. Currently
-        # always matches against the narrow (95-char) glyph pool.
+        # When True (the default), characters are chosen by matching a
+        # sub-cell glyph shape profile instead of averaging the cell to one
+        # brightness value -- see glyph_profiles.py and TODO.md items 2/3.
+        # Always matches against the narrow (95-char) glyph pool. Set False
+        # for the original plain brightness-density mapping (CLI: --simple).
         self.shape_aware = shape_aware
         # Optional ink-density fraction (0-1) to use as the image's black
         # point -- see apply_ink_ceiling(). None disables this step. Pass
@@ -60,6 +69,12 @@ class ASCIIArtGenerator:
         # every glyph in the pool used equally often). See _compute_diversity().
         self.last_diversity_unique_count = None
         self.last_diversity_pct = None
+        # Populated by match_sharpness()/match_sharpness_to_reference(): the
+        # factor it found, the sharpness that factor actually achieved, and
+        # the target it was aiming for. None until that method has been called.
+        self.last_sharpness_factor = None
+        self.last_measured_sharpness = None
+        self.last_sharpness_target = None
 
         # Set character set
         if char_set in self.CHAR_SETS:
@@ -86,6 +101,16 @@ class ASCIIArtGenerator:
     # scoring. 0.15 is a starting point (~15 percentage points of ink), not
     # a measured value.
     SUBCELL_MATCH_TOLERANCE = 0.15
+
+    # Default sharpness target (Laplacian variance, see measure_sharpness())
+    # for match_sharpness() to aim for when no explicit target is given.
+    # Measured from a reference photo the user hand-picked as having the
+    # right amount of sharpness for legible output (a sharpened version of
+    # the bundled Lenna test photo). Baked in as a number rather than a
+    # dependency on that specific file, so it survives regardless of
+    # whether that file exists on disk -- pass target_sharpness explicitly
+    # (or use match_sharpness_to_reference()) to aim for something else.
+    IDEAL_SHARPNESS = 2132.39
 
     @staticmethod
     def calculate_auto_height(width, image):
@@ -126,6 +151,29 @@ class ASCIIArtGenerator:
         return Image.fromarray((arr * 255.0).clip(0, 255).astype(np.uint8))
 
     @staticmethod
+    def apply_sharpness(image, factor):
+        """Adjust image sharpness by the given factor (PIL ImageEnhance.Sharpness).
+
+        1.0 leaves the image unchanged; >1.0 sharpens (unsharp-mask-like);
+        <1.0 softens. See measure_sharpness()/match_sharpness_to_reference()
+        for finding a factor automatically instead of guessing one.
+        """
+        return ImageEnhance.Sharpness(image).enhance(factor)
+
+    @staticmethod
+    def measure_sharpness(image):
+        """Measure how sharp/crisp an image is via Laplacian variance.
+
+        A standard blur-detection metric: the Laplacian responds to
+        high-frequency content (edges), so its variance across the image is
+        low for blurry/soft images and high for crisp ones. Used to compare
+        an image's sharpness against a reference rather than guessing a
+        fixed enhancement amount.
+        """
+        arr = np.array(image.convert('L'), dtype=np.float64)
+        return cv2.Laplacian(arr, cv2.CV_64F).var()
+
+    @staticmethod
     def apply_invert(image):
         """Invert image tones."""
         return ImageOps.invert(image)
@@ -164,6 +212,15 @@ class ASCIIArtGenerator:
             if self.height is None:
                 self.height = self.calculate_auto_height(self.width, image)
                 self.debug_print(f"Auto-calculated height: {self.height}")
+
+            # Apply sharpening on the full-resolution source, before the
+            # ascii-grid resize below -- unlike contrast/brightness/gamma
+            # (pointwise), sharpening is a spatial filter and has much less
+            # high-frequency detail left to work with once heavily
+            # downsampled.
+            if self.sharpness != 1.0:
+                self.debug_print(f"Adjusting sharpness with factor {self.sharpness}")
+                image = self.apply_sharpness(image, self.sharpness)
 
             # Resize image. In shape-aware mode we need GRID_COLS x GRID_ROWS
             # source pixels per output character (not just one), so profile
@@ -459,6 +516,61 @@ class ASCIIArtGenerator:
         self.gamma = best_g
         return best_g, best_div
 
+    def match_sharpness(self, image, target_sharpness=None, low=1.0, high=20.0,
+                         coarse_steps=13, fine_steps=9, max_expansions=10):
+        """Find the sharpness factor that makes `image` reach `target_sharpness`
+        (Laplacian variance, see measure_sharpness()), instead of boosting by
+        a fixed guessed amount. Defaults to IDEAL_SHARPNESS if no target is
+        given, so this works out of the box without pointing at any specific
+        reference photo -- pass target_sharpness explicitly (or use
+        match_sharpness_to_reference()) to aim for something else.
+
+        Measured at the image's own native resolution (before any
+        ascii-grid resize). Sharpness rises monotonically with the
+        enhancement factor (verified empirically -- see TODO.md/
+        experiments/), so if the target isn't bracketed by [low, high] yet,
+        `high` is doubled (up to max_expansions times) before the same
+        coarse-to-fine grid search the rest of this class's optimize_*()
+        methods use -- except this one minimizes distance to a target
+        instead of maximizing a score. Sets self.sharpness to the best
+        factor found (applied automatically by _preprocess_image on the
+        next conversion). Returns (best_factor, achieved_sharpness,
+        target_sharpness).
+        """
+        target = self.IDEAL_SHARPNESS if target_sharpness is None else target_sharpness
+
+        def evaluate(factor):
+            sharpened = self.apply_sharpness(image, factor)
+            return self.measure_sharpness(sharpened)
+
+        expansions_left = max_expansions
+        while evaluate(high) < target and expansions_left > 0:
+            high *= 2
+            expansions_left -= 1
+
+        coarse_candidates = np.linspace(low, high, coarse_steps)
+        results = [(f, evaluate(f)) for f in coarse_candidates]
+        best_f, best_val = min(results, key=lambda r: abs(r[1] - target))
+        self.debug_print(f"match_sharpness coarse pass: best={best_f:.3f} sharpness={best_val:.2f} target={target:.2f}")
+
+        idx = int(np.argmin(np.abs(coarse_candidates - best_f)))
+        lo = coarse_candidates[max(idx - 1, 0)]
+        hi = coarse_candidates[min(idx + 1, len(coarse_candidates) - 1)]
+        fine_candidates = np.linspace(lo, hi, fine_steps)
+        results += [(f, evaluate(f)) for f in fine_candidates]
+        best_f, best_val = min(results, key=lambda r: abs(r[1] - target))
+        self.debug_print(f"match_sharpness fine pass: best={best_f:.3f} sharpness={best_val:.2f} target={target:.2f}")
+
+        self.sharpness = best_f
+        self.last_sharpness_factor = best_f
+        self.last_measured_sharpness = best_val
+        self.last_sharpness_target = target
+        return best_f, best_val, target
+
+    def match_sharpness_to_reference(self, image, reference_image, **kwargs):
+        """Convenience wrapper: measure reference_image's sharpness and match_sharpness() to that."""
+        return self.match_sharpness(image, target_sharpness=self.measure_sharpness(reference_image), **kwargs)
+
     def _compute_diversity(self, ascii_image, pool_size):
         """Count distinct glyphs used and their usage evenness.
 
@@ -579,28 +691,41 @@ def main():
                        help='Character set to use (default: standard)', default='standard')
     parser.add_argument('--contrast', type=float, help='Contrast adjustment (default: 1.0)', default=1.0)
     parser.add_argument('--brightness', type=float, help='Brightness adjustment (default: 1.0)', default=1.0)
-    parser.add_argument('--gamma', type=float, help='Gamma curve, applied after brightness (default: 1.0, no-op; <1 lifts shadows)', default=1.0)
+    parser.add_argument('--gamma', type=float, default=None,
+                       help='Gamma curve, applied after brightness (default: auto-tuned via '
+                            'optimize_gamma_for_diversity() -- pass a fixed value to disable that search; '
+                            'always 1.0/no-op in --simple mode unless set here)')
+    parser.add_argument('--sharpness', type=float, default=None,
+                       help='Sharpness adjustment, applied before resizing (default: auto-matched to '
+                            'ASCIIArtGenerator.IDEAL_SHARPNESS via match_sharpness() -- pass a fixed value to '
+                            'disable that search; always 1.0/no-op in --simple mode unless set here)')
+    parser.add_argument('--match-sharpness', nargs='?', const=True, default=None, metavar='REFERENCE_IMAGE',
+                       help="Like the default auto sharpness-matching, but aim for a specific reference "
+                            "image's sharpness instead of the built-in target. With no value, same as the "
+                            "default (ASCIIArtGenerator.IDEAL_SHARPNESS)")
     parser.add_argument('--invert', action='store_true', help='Invert the image')
     parser.add_argument('--dither', action='store_true', help='Apply dithering for better detail')
-    parser.add_argument('--shape-aware', action='store_true',
-                       help='Match characters by sub-cell glyph shape profile instead of average brightness (narrow glyph pool only, experimental)')
+    parser.add_argument('--simple', action='store_true',
+                       help='Use the original plain brightness-density mapping instead of the default '
+                            'shape-aware pipeline, and skip the automatic sharpness/gamma tuning that comes '
+                            'with it (individual flags like --gamma/--sharpness still apply on top)')
     parser.add_argument('--ink-ceiling', choices=['none', 'glyph-avg', 'subcell'], default='none',
                        help="Raise the image's black point to what the glyph pool can actually render: "
                             "'glyph-avg' targets the darkest glyph's overall average ink, 'subcell' targets "
-                            "the darkest single sub-cell rectangle (experimental, see TODO.md)")
+                            "the darkest single sub-cell rectangle (experimental, see TODO.md; superseded by "
+                            "the default sharpness/gamma tuning for most photos)")
     parser.add_argument('--optimize-brightness', action='store_true',
-                       help='Search for the brightness value that maximizes shape-aware match accuracy -- '
-                            'NOTE: this objective is a known dead end (see TODO.md), kept for reference/comparison '
-                            '(requires --shape-aware; expensive -- re-runs the full pipeline ~22 times)')
+                       help='Search for the brightness value that maximizes shape-aware match accuracy instead '
+                            'of the default gamma-diversity search -- NOTE: this objective is a known dead end '
+                            '(see TODO.md), kept for reference/comparison (incompatible with --simple; '
+                            'expensive -- re-runs the full pipeline ~22 times)')
     parser.add_argument('--optimize-diversity', action='store_true',
-                       help='Search for the brightness value that maximizes output glyph diversity -- has a '
-                            'genuine interior optimum, unlike --optimize-brightness '
-                            '(requires --shape-aware; expensive -- re-runs the full pipeline ~22 times)')
+                       help='Search for the brightness value (rather than gamma) that maximizes output glyph '
+                            'diversity (incompatible with --simple; expensive -- re-runs the full pipeline '
+                            '~22 times)')
     parser.add_argument('--optimize-gamma-diversity', action='store_true',
-                       help='Search for the gamma curve that maximizes output glyph diversity -- reshapes '
-                            'shadows/highlights unevenly instead of shifting everything uniformly, reaching a '
-                            'higher diversity peak than --optimize-diversity on the reference photo '
-                            '(requires --shape-aware; expensive -- re-runs the full pipeline ~22 times)')
+                       help='Explicitly run the default gamma-diversity search (same as leaving --gamma unset '
+                            'in the default shape-aware mode; this flag mainly exists for scripting clarity)')
     parser.add_argument('--preview', action='store_true', help='Preview the ASCII art in console')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
 
@@ -612,29 +737,56 @@ def main():
     elif args.ink_ceiling == 'subcell':
         ink_ceiling = darkest_subcell_ink()
 
+    shape_aware = not args.simple
+
     optimize_flags = [args.optimize_brightness, args.optimize_diversity, args.optimize_gamma_diversity]
-    if any(optimize_flags) and not args.shape_aware:
-        parser.error("--optimize-brightness/--optimize-diversity/--optimize-gamma-diversity require --shape-aware")
+    if any(optimize_flags) and not shape_aware:
+        parser.error("--optimize-brightness/--optimize-diversity/--optimize-gamma-diversity require shape-aware mode (incompatible with --simple)")
     if sum(optimize_flags) > 1:
         parser.error("--optimize-brightness, --optimize-diversity, and --optimize-gamma-diversity are mutually exclusive")
 
     try:
-        # Create generator with specified parameters
+        # Create generator with specified parameters. Manually-specified
+        # gamma/sharpness values are honored as-is; otherwise they start at
+        # 1.0 (no-op) and get auto-tuned below unless --simple was given.
         generator = ASCIIArtGenerator(
             char_set=args.char_set,
             width=args.width,
             height=args.height,
             contrast=args.contrast,
             brightness=args.brightness,
-            gamma=args.gamma,
+            gamma=args.gamma if args.gamma is not None else 1.0,
+            sharpness=args.sharpness if args.sharpness is not None else 1.0,
             invert=args.invert,
             dither=args.dither,
             debug=args.debug,
-            shape_aware=args.shape_aware,
+            shape_aware=shape_aware,
             ink_ceiling=ink_ceiling
         )
 
-        # Search for the best brightness/gamma before the real conversion, if requested
+        # Sharpness: an explicit --sharpness value always wins. Otherwise,
+        # --match-sharpness (with or without a reference path) runs the
+        # search even in --simple mode since it was explicitly requested.
+        # Absent both, shape-aware mode auto-matches to the built-in
+        # default target; --simple leaves sharpness at 1.0.
+        if args.sharpness is not None:
+            pass
+        elif args.match_sharpness:
+            if args.match_sharpness is True:
+                best_factor, achieved, target = generator.match_sharpness(Image.open(args.input))
+            else:
+                best_factor, achieved, target = generator.match_sharpness_to_reference(
+                    Image.open(args.input), Image.open(args.match_sharpness)
+                )
+            print(f"Matched sharpness: factor={best_factor:.3f} (achieved {achieved:.2f}, target {target:.2f})")
+        elif shape_aware:
+            best_factor, achieved, target = generator.match_sharpness(Image.open(args.input))
+            print(f"Matched sharpness (default): factor={best_factor:.3f} (achieved {achieved:.2f}, target {target:.2f})")
+
+        # Gamma/brightness search: an explicit --optimize-* flag picks a
+        # specific objective. Otherwise, shape-aware mode auto-runs the
+        # gamma-diversity search unless gamma was set manually; --simple
+        # leaves gamma at 1.0 (or whatever --gamma was set to).
         if args.optimize_brightness:
             best_brightness, best_accuracy = generator.optimize_brightness(Image.open(args.input))
             print(f"Optimized brightness: {best_brightness:.3f} (accuracy {best_accuracy:.2f}%)")
@@ -644,6 +796,9 @@ def main():
         elif args.optimize_gamma_diversity:
             best_gamma, best_diversity = generator.optimize_gamma_for_diversity(Image.open(args.input))
             print(f"Optimized gamma: {best_gamma:.3f} (diversity {best_diversity:.2f}%)")
+        elif shape_aware and args.gamma is None:
+            best_gamma, best_diversity = generator.optimize_gamma_for_diversity(Image.open(args.input))
+            print(f"Optimized gamma (default): {best_gamma:.3f} (diversity {best_diversity:.2f}%)")
 
         # Convert image to ASCII
         ascii_art = generator.convert_image(args.input)

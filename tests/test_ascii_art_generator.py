@@ -14,8 +14,9 @@ from ascii_art_generator import ASCIIArtGenerator
 
 @pytest.fixture
 def generator():
-    """Create a default ASCIIArtGenerator."""
-    return ASCIIArtGenerator(width=20, debug=False)
+    """Create a plain-mode ASCIIArtGenerator (this file tests the original
+    brightness-density mapping specifically, not the shape-aware default)."""
+    return ASCIIArtGenerator(width=20, shape_aware=False, debug=False)
 
 
 @pytest.fixture
@@ -90,7 +91,7 @@ class TestConversion:
 
     def test_gradient_has_variety(self):
         """Test that a gradient image produces varied characters."""
-        gen = ASCIIArtGenerator(width=50, char_set='basic', debug=False)
+        gen = ASCIIArtGenerator(width=50, char_set='basic', shape_aware=False, debug=False)
         arr = np.zeros((20, 100, 3), dtype=np.uint8)
         for x in range(100):
             arr[:, x, :] = int(x * 255 / 99)
@@ -131,14 +132,14 @@ class TestOptions:
 
     def test_invert(self, white_image):
         """Test that invert option changes the output."""
-        gen_normal = ASCIIArtGenerator(width=10, debug=False)
-        gen_invert = ASCIIArtGenerator(width=10, invert=True, debug=False)
+        gen_normal = ASCIIArtGenerator(width=10, shape_aware=False, debug=False)
+        gen_invert = ASCIIArtGenerator(width=10, invert=True, shape_aware=False, debug=False)
         result_normal = gen_normal.direct_convert(white_image)
         result_invert = gen_invert.direct_convert(white_image)
         assert result_normal != result_invert
 
     def test_dither(self, gradient_image):
         """Test that dither option does not crash."""
-        gen = ASCIIArtGenerator(width=20, dither=True, debug=False)
+        gen = ASCIIArtGenerator(width=20, dither=True, shape_aware=False, debug=False)
         result = gen.direct_convert(gradient_image)
         assert isinstance(result, str)

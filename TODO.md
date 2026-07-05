@@ -75,6 +75,43 @@ squared-distance ranking among the closest-available options is sensitive to min
 Not a bug in the matching logic — a real gap that switching to the expanded glyph pool, or item 4
 (warp/contrast tuning), may need to address if flat-region fidelity matters.
 
+**Promoted to the default (2026-07-04):** after a long round of experimentation (see
+`experiments/README.txt` for the full trail), `shape_aware=True` is now `ASCIIArtGenerator`'s
+constructor default, and the CLI's no-flags default runs the full best-known recipe automatically:
+- `match_sharpness()` boosts sharpness (PIL `ImageEnhance.Sharpness`) to hit
+  `ASCIIArtGenerator.IDEAL_SHARPNESS` (2132.39, Laplacian variance measured from a reference photo
+  the user hand-picked as "ideal" -- baked in as a number per their explicit request, not a
+  dependency on that file, since it's an untracked fixture that's already been deleted by accident
+  more than once).
+- `optimize_gamma_for_diversity()` then searches a gamma curve to maximize glyph diversity (see
+  below for why diversity, not accuracy).
+- The original plain brightness-density mapping is still available via `--simple` (also skips both
+  auto-searches; individual `--gamma`/`--sharpness`/etc. flags still apply on top of either mode).
+
+**Key finding along the way: accuracy is a dead end as a search target, diversity works.**
+Tried auto-searching brightness/ink-ceiling to maximize a per-cell "accuracy" score (`last_accuracy`,
+tolerance-based sub-cell match rate against glyph profiles). Confirmed via `experiments/sweep_*`
+that this is a dead end *either way* you score it: scored against the same adjusted image being
+searched, it's gameable (the search just brightens toward blank, since blank trivially matches
+everywhere); scored against the true unadjusted image instead, it's monotonic the other way --
+converges to "don't touch the image" as best, since any deviation from truth necessarily scores
+worse against truth by construction. Kept as a reported diagnostic only (`--optimize-brightness`),
+never trust it as a search objective. **Diversity** (`last_diversity_pct`/`last_diversity_unique_count`,
+normalized Shannon entropy of glyph usage) has a genuine interior optimum instead -- too dark
+collapses onto a few "closest available dark" glyphs, too bright collapses toward blank, a good
+middle ground spreads usage across many glyphs. `optimize_for_diversity()` (brightness) and
+`optimize_gamma_for_diversity()` (gamma curve, empirically better -- a curve reshapes shadows/
+highlights unevenly instead of just shifting everything) both target this instead.
+
+Diversity isn't perfectly reliable either, though: blending edge-detection into the source image
+(both an additive-darken overlay and a straight 50/50 crossfade, using the three edge modes
+already in `image_processor.py`) *raised* diversity numbers further still but the user's own
+eyeball verdict was that every edge variant looked *less* legible than the plain gamma-diversity
+result -- crossfade in particular just homogenizes flat regions into one repeated glyph, high
+entropy but low information. Lesson: diversity is a good signal for steering away from degenerate
+collapse, but stops being trustworthy once comparing already-reasonable candidates -- look at the
+render too.
+
 ## 4. Image warp/skew optimization algorithm
 Create an algorithm that modifies the source image (skewing/stretching) to try to maximize the
 accuracy score from item 2/3 — i.e. automatically search over geometric transforms of the input
